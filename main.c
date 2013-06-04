@@ -104,8 +104,8 @@ static inline size_t search_optimized(struct T_cash_account_row const*const __re
 	size_t count_of_func = 0;
 	if(range_filters->use_filter[amount_of_money_e]) func_ptr[count_of_func++] = (T_func)test_predicate_amount_of_money;
 	if(range_filters->use_filter[gender_e]) func_ptr[count_of_func++] = (T_func)test_predicate_gender;
-	if(range_filters->use_filter[age_e]) func_ptr[count_of_func++] = (T_func)test_predicate_age;
 	if(range_filters->use_filter[code_e]) func_ptr[count_of_func++] = (T_func)test_predicate_code;
+	if(range_filters->use_filter[age_e]) func_ptr[count_of_func++] = (T_func)test_predicate_age;
 	if(range_filters->use_filter[height_e]) func_ptr[count_of_func++] = (T_func)test_predicate_height;
 	func_ptr[count_of_func] = (T_func)test_predicate_true;
 

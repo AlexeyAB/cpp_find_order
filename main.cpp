@@ -2,10 +2,12 @@
 #include <stdlib.h>     /* calloc, exit, free */
 #include <time.h>       /* clock_t, clock, CLOCKS_PER_SEC */
 
-#include <memory>    	// std::unique_ptr<>
+#include <memory>		// std::unique_ptr<>
 #include <array>		// std::array<>
 #include <type_traits>	// std::enable_if<>
 
+#include <iostream>		// std::cout
+#include <map>			// std::map<>
 
 const size_t c_array_size = 10000000;
 
@@ -14,7 +16,7 @@ struct T_cash_account_row {
 
 	// Fields:
 	enum T_field_enum { amount_of_money_e, gender_e, age_e, code_e, height_e,   /*<<<<<- add fields here (with index) */
-		last_e 
+		last_e
 			/*<<<<<- add included fields here (without index) */
 	};
 	static_assert(last_e > 0, "Number of indexed fields in enum of T_user_row must be greater than 0!");
@@ -34,8 +36,21 @@ struct T_cash_account_row {
 	template<int field_enum> inline typename std::enable_if<field_enum == height_e, decltype(height)>::type get_field_value() const { return height; }
 
 	template<int field_enum> inline typename std::enable_if<field_enum == last_e, bool>::type get_field_value() const { return true; }
-
 	static_assert(5 == last_e, "Add/delete new field-case and correct this assert!");
+
+	// Get cardinality
+	template<int field_enum>
+	// constexpr // not supported in the MSVS2012(MVCC11)
+	static inline const unsigned int get_bitf_size() { 
+		return (field_enum == gender_e)?1:
+			(field_enum == age_e)?		100:
+			(field_enum == height_e)?	300:
+			(field_enum == code_e)?		1000000:
+			(field_enum == amount_of_money_e)?1000000:
+			0;
+		static_assert(5 == last_e, "Add/delete new field-case and correct this assert!");
+	}
+
 };
 /* ----------------------------------------------------------------------- */
 
@@ -55,26 +70,27 @@ static inline struct T_cash_account_row generate_row() {
 struct T_range_filters {
     struct T_cash_account_row begin, end;
     /* bytes array or bitset from https://gist.github.com/jmbr/667605 */
-    unsigned char use_filter[T_cash_account_row::last_e]; 
+	unsigned char use_filter[T_cash_account_row::last_e]; 
 };
 /* ----------------------------------------------------------------------- */
 
-
-// The templated constructor of unrolling of the class (no return, mandatory call to the constructor, called once)
+// Templated constructor of class unrolling (no return, mandatory call to the constructor, called once)
 template<unsigned unroll_count, template<unsigned> class T>
 struct T_unroll_constructor {
 	T_unroll_constructor<unroll_count-1, T> next_unroll;
 	T<unroll_count-1> functor;
 	template<typename T1> inline T_unroll_constructor(T1 &val1) : next_unroll(val1), functor(val1) {}
+	template<typename T1, typename T2> inline T_unroll_constructor(T1 *const __restrict val1, T2 *const __restrict val2) : next_unroll(val1, val2), functor(val1, val2) {}
 };
 // End of unroll
 template<template<unsigned> class T>
 struct T_unroll_constructor<0, T> { 
 	template<typename T1> inline T_unroll_constructor(T1 &) {} 
+	template<typename T1, typename T2> inline T_unroll_constructor(T1 *const __restrict, T2 *const __restrict) {}
 };
 // -------------------------------------------------------------------------
 
-// The templated functor of unrolling of the input templated functor (reusable)
+// Templated functor unrolling (reusable)
 template<unsigned unroll_count, template<unsigned> class T>
 struct T_unroll_functor {
 	T_unroll_functor<unroll_count-1, T> next_unroll;
@@ -100,10 +116,85 @@ struct T_filter {
 	// Get index of T_test_pred version for current search range 
 	static inline const unsigned get_index_pred(T_range_filters const*const __restrict range_filters) {
 		unsigned result = 0;
-		for(size_t i = 0; i <  T_row::last_e; ++i) result |= range_filters->use_filter[i]?(1<<i):0;
+		for(size_t i = 0; i < T_row::last_e; ++i) result |= range_filters->use_filter[i]?(1<<i):0;
 		return result;
 	}
+	// -------------------------------------------------------------------------
+
+	// The unrolling filling of selectivity in a compile-time
+	template<unsigned field_num>
+	struct T_selectivity_fill {
+		T_selectivity_fill(std::map<unsigned, unsigned> *const __restrict ordered_filters, T_range_filters const*const __restrict range_filters) { 
+			const auto begin = range_filters->begin.template get_field_value<field_num>(), end = range_filters->end.template get_field_value<field_num>();
+			const auto delta = (begin > end)?0:(1 + end - begin);
+			const unsigned selectivity = range_filters->use_filter[field_num]?
+				(delta*c_array_size / 
+				T_row::template get_bitf_size<field_num>() // cardinality
+				)
+				:c_array_size;
+			ordered_filters->insert(std::make_pair(field_num, selectivity));		// selectivity for each field-filter
+		}
+	};
+		
+	// Get index of T_test_pred version for current search range 
+	static inline const unsigned get_index_order(T_range_filters const*const __restrict range_filters) {
+		unsigned result = 0;
+
+		std::map<unsigned, unsigned> ordered_filters;	
+		T_unroll_constructor<T_row::last_e, T_selectivity_fill> selectivity_fill(&ordered_filters, range_filters);
+
+		unsigned multiplexor = 1;
+		for(size_t i = 0; i < T_row::last_e; ++i) {
+			unsigned cur_index = 0, min_index = 0;
+			unsigned field_num = ordered_filters.cbegin()->first, min = c_array_size;
+			for(auto const& it : ordered_filters) {
+				if (it.second < min) min = it.second, field_num = it.first, min_index = cur_index;
+				++cur_index;
+			}
+			ordered_filters.erase(field_num);
+			result += min_index*multiplexor;
+			multiplexor *= (T_row::last_e - i);
+		}
+		return result;
+	}
+	// -------------------------------------------------------------------------
+	// Brute force permutations fields at compile-time
+
+	// Get the sequence number the remaining field for the number_filter, after removal of all previous 
+	template <unsigned index_order, unsigned number_filter, unsigned index = T_row::last_e> 
+	struct T_number_remaining_field : std::integral_constant<unsigned, T_number_remaining_field<index_order / index, number_filter - 1, index - 1>::value> {};
+
+	// End of unroll
+	template <unsigned index_order, unsigned index> 
+	struct T_number_remaining_field<index_order, 0, index> : std::integral_constant<unsigned, index_order % index> {};
+	// -------------------------------------------------------------------------
+
+	// Get 1 or 0 offset if current_field (for number_filter) affect to number_field
+	template <unsigned index_order, unsigned number_filter, unsigned number_field>
+	struct T_offset {
+		enum { current_field = T_number_remaining_field<index_order, number_filter>::value,
+			value = (current_field <= number_field)?1:0 };
+	};
 	
+	// Get offset of number_field (enum in row-type) for number_filter
+	template <unsigned index_order, unsigned number_filter, unsigned number_field>
+	struct T_offset_number_field {
+		enum { offset = T_offset<index_order, number_filter-1, number_field>::value,
+			value = T_offset_number_field<index_order, number_filter-1, number_field + offset>::value + offset };
+	};
+
+	// End of unroll
+	template <unsigned index_order, unsigned number_field>
+	struct T_offset_number_field<index_order, 0, number_field> : std::integral_constant<unsigned, 0> {};
+
+	// (Main) Get number of field (enum in row-type) for number_filter
+	template <unsigned index_order, unsigned number_filter>
+	struct T_number_field {
+		enum { remaining_field = T_number_remaining_field<index_order, number_filter>::value,
+			value = remaining_field + T_offset_number_field<index_order, number_filter, remaining_field>::value };
+	};
+	// -------------------------------------------------------------------------
+
 	// search
 	virtual size_t search(T_row const*const __restrict array_ptr, const size_t c_array_size,
 		T_row *const __restrict result_ptr, T_range_filters const*const __restrict filters) = 0;
@@ -111,7 +202,7 @@ struct T_filter {
 // -------------------------------------------------------------------------
 
 // The filters for each search variant (range_filters)
-template<typename T_row, unsigned index_pred>
+template<typename T_row, unsigned index_pred, unsigned index_order = 0>
 struct T_custom_filter : T_filter<T_row> {
 
 	// Test predicates functor for unrolling
@@ -121,11 +212,12 @@ struct T_custom_filter : T_filter<T_row> {
 		{
 			typedef typename T_row::T_field_enum T_field_enum;
 			// Without fields where use_filter==0
-			return ( T_filter<T_row>::template T_get_use_filter<index_pred, field_num>::value ||
-				(row->template get_field_value<static_cast<T_field_enum>(field_num)>() >= 
-					range_filters->begin.template get_field_value<static_cast<T_field_enum>(field_num)>()	&& 
-				row->template get_field_value<static_cast<T_field_enum>(field_num)>() <= 
-					range_filters->end.template get_field_value<static_cast<T_field_enum>(field_num)>()) );
+			enum { ordered_field_number = T_filter<T_row>::template T_number_field<index_order, field_num>::value };
+			return ( T_filter<T_row>::template T_get_use_filter<index_pred, ordered_field_number>::value ||
+				(row->template get_field_value<static_cast<T_field_enum>(ordered_field_number)>() >= 
+					range_filters->begin.template get_field_value<static_cast<T_field_enum>(ordered_field_number)>()	&& 
+				row->template get_field_value<static_cast<T_field_enum>(ordered_field_number)>() <= 
+					range_filters->end.template get_field_value<static_cast<T_field_enum>(ordered_field_number)>()) );
 		}			
 	};
 	// -----------------------------------------------------------------------
@@ -146,18 +238,29 @@ struct T_custom_filter : T_filter<T_row> {
 };
 // -------------------------------------------------------------------------
 
+template <unsigned N> struct factorial : std::integral_constant<unsigned, N * factorial<N-1>::value> {};
+template <> struct factorial<0> : std::integral_constant<unsigned, 1> {};
+
 template<typename T_row>
 class T_optimized_search {
 	// unroll tamplates
 	template<unsigned index_pred>
 	struct T_unroll_find {
-		template<typename T> T_unroll_find(T &filters) { 
-			filters[index_pred].reset( new T_custom_filter<T_row, index_pred>() ); 
+		template<unsigned index_order>
+		struct T_unroll_order {
+			template<typename T> T_unroll_order(T &filters) { 
+				filters[index_pred + index_order*(1<<T_row::last_e)].reset( new T_custom_filter<T_row, index_pred, index_order>() ); 
+			}
+		};
+		T_unroll_constructor<factorial<T_row::last_e>::value, T_unroll_order> fill_ordered_filter;
+
+		template<typename T> T_unroll_find(T &filters) : fill_ordered_filter(filters)
+		{ 
 		}
 	};
 	// -------------------------------------------------------------------------
 
-	std::array<std::unique_ptr<T_filter<T_row>>, 1<<T_row::last_e> filters;
+	std::array<std::unique_ptr<T_filter<T_row>>, (1<<T_row::last_e)*factorial<T_row::last_e>::value> filters;
 	T_unroll_constructor< 1<<T_row::last_e, T_unroll_find> fill_filter;
 public:
 	T_optimized_search() : fill_filter(filters) {}
@@ -166,7 +269,7 @@ public:
 	inline size_t search(T_row const*const __restrict array_ptr, const size_t c_array_size,
 			T_row *const __restrict result_ptr, T_range_filters const*const __restrict range_filters) 
 	{
-		auto const& filter = filters[T_filter<T_row>::get_index_pred(range_filters)];
+		auto const& filter = filters[T_filter<T_row>::get_index_pred(range_filters) + T_filter<T_row>::get_index_order(range_filters)*(1<<T_row::last_e)];
 		return filter->search(array_ptr, c_array_size, result_ptr, range_filters);
 	}
 };
