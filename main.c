@@ -2,6 +2,12 @@
 #include <stdlib.h>     /* calloc, exit, free */
 #include <time.h>       /* clock_t, clock, CLOCKS_PER_SEC */
 
+#ifdef _MSC_VER
+#define __Inline __forceinline
+#else
+#define __Inline static inline
+#endif
+
 const size_t c_array_size = 10000000;
 
 /* Fields */
@@ -18,7 +24,7 @@ struct T_cash_account_row {
 /* ----------------------------------------------------------------------- */
 
 /* Generate random data for the one row */
-static inline struct T_cash_account_row generate_row() {
+__Inline struct T_cash_account_row generate_row() {
 	struct T_cash_account_row cash_account_row;
 	cash_account_row.age = rand() % 100;
 	cash_account_row.amount_of_money = (rand() % 1000)*(rand() % 1000);
@@ -43,7 +49,7 @@ typedef unsigned char (*T_func)(struct T_cash_account_row const*const __restrict
 	T_range_filters const*const __restrict, T_func_void, size_t *const __restrict index);
 
 /* Compare row with filter amount_of_money */
-static inline unsigned char test_predicate_amount_of_money(struct T_cash_account_row const*const __restrict row, 
+__Inline unsigned char test_predicate_amount_of_money(struct T_cash_account_row const*const __restrict row, 
     struct T_range_filters const*const __restrict range_filters, T_func func[], size_t *const __restrict index) 
 {
     return (row->amount_of_money >= range_filters->begin.amount_of_money &&
@@ -53,7 +59,7 @@ static inline unsigned char test_predicate_amount_of_money(struct T_cash_account
 /* ----------------------------------------------------------------------- */
 
 /* Compare row with filter gender */
-static inline unsigned char test_predicate_gender(struct T_cash_account_row const*const __restrict row, 
+__Inline unsigned char test_predicate_gender(struct T_cash_account_row const*const __restrict row, 
     struct T_range_filters const*const __restrict range_filters, T_func func[], size_t *const __restrict index) 
 {
     return (row->gender >= range_filters->begin.gender && row->gender <= range_filters->end.gender) && 
@@ -62,7 +68,7 @@ static inline unsigned char test_predicate_gender(struct T_cash_account_row cons
 /* ----------------------------------------------------------------------- */
 
 /* Compare row with filter age */
-static inline unsigned char test_predicate_age(struct T_cash_account_row const*const __restrict row, 
+__Inline unsigned char test_predicate_age(struct T_cash_account_row const*const __restrict row, 
     struct T_range_filters const*const __restrict range_filters, T_func func[], size_t *const __restrict index) 
 {
     return (row->age >= range_filters->begin.age && row->age <= range_filters->end.age) && 
@@ -71,7 +77,7 @@ static inline unsigned char test_predicate_age(struct T_cash_account_row const*c
 /* ----------------------------------------------------------------------- */
 
 /* Compare row with filter code */
-static inline unsigned char test_predicate_code(struct T_cash_account_row const*const __restrict row, 
+__Inline unsigned char test_predicate_code(struct T_cash_account_row const*const __restrict row, 
     struct T_range_filters const*const __restrict range_filters, T_func func[], size_t *const __restrict index)  
 {
     return (row->code >= range_filters->begin.code && row->code <= range_filters->end.code) && 
@@ -80,7 +86,7 @@ static inline unsigned char test_predicate_code(struct T_cash_account_row const*
 /* ----------------------------------------------------------------------- */
 
 /* Compare row with filter height */
-static inline unsigned char test_predicate_height(struct T_cash_account_row const*const __restrict row, 
+__Inline unsigned char test_predicate_height(struct T_cash_account_row const*const __restrict row, 
     struct T_range_filters const*const __restrict range_filters, T_func func[], size_t *const __restrict index) 
 {
     return (row->height >= range_filters->begin.height && row->height <= range_filters->end.height) && 
@@ -89,7 +95,7 @@ static inline unsigned char test_predicate_height(struct T_cash_account_row cons
 /* ----------------------------------------------------------------------- */
 
 /* Always false */
-static inline unsigned char test_predicate_true(struct T_cash_account_row const*const __restrict row, 
+__Inline unsigned char test_predicate_true(struct T_cash_account_row const*const __restrict row, 
     struct T_range_filters const*const __restrict range_filters, T_func func[], size_t *const __restrict index) 
 {
     return 1;
@@ -97,10 +103,12 @@ static inline unsigned char test_predicate_true(struct T_cash_account_row const*
 /* ----------------------------------------------------------------------- */
 
 /* C optimized search */
-static inline size_t search_optimized(struct T_cash_account_row const*const __restrict array_ptr, const size_t c_array_size,
+__Inline size_t search_optimized(struct T_cash_account_row const*const __restrict array_ptr, const size_t c_array_size,
 	struct T_cash_account_row *const __restrict result_ptr, struct T_range_filters const*const __restrict range_filters) 
 {
 	static T_func func_ptr[last_e + 1];
+	size_t result_size = 0;
+	size_t i; /* loop index */
 	size_t count_of_func = 0;
 	if(range_filters->use_filter[amount_of_money_e]) func_ptr[count_of_func++] = (T_func)test_predicate_amount_of_money;
 	if(range_filters->use_filter[gender_e]) func_ptr[count_of_func++] = (T_func)test_predicate_gender;
@@ -109,19 +117,101 @@ static inline size_t search_optimized(struct T_cash_account_row const*const __re
 	if(range_filters->use_filter[height_e]) func_ptr[count_of_func++] = (T_func)test_predicate_height;
 	func_ptr[count_of_func] = (T_func)test_predicate_true;
 
-	size_t result_size = 0;
-	size_t i; /* loop index */
 	for(i = 0; i < c_array_size; ++i) {
 		size_t k = 0;
 		if(func_ptr[0](array_ptr + i, range_filters, (T_func_void)&func_ptr, &k))
 			result_ptr[result_size] = array_ptr[i], ++result_size;
 	}
+	
 	return result_size;
 }
 /* ----------------------------------------------------------------------- */
 
+#include "permut.h"
+
+#define filt_amount_of_money(k, row, filt) \
+  ( !((k)&(1<<amount_of_money_e)) || \
+    (row)->amount_of_money >= (filt)->begin.amount_of_money && \
+    (row)->amount_of_money <= (filt)->end.amount_of_money )
+
+#define filt_gender(k, row, filt) \
+  ( !((k)&(1<<gender_e)) || \
+    (row)->gender >= (filt)->begin.gender && \
+    (row)->gender <= (filt)->end.gender )
+
+#define filt_age(k, row, filt) \
+  ( !((k)&(1<<age_e)) || \
+    (row)->age >= (filt)->begin.age && \
+    (row)->age <= (filt)->end.age )
+
+#define filt_code(k, row, filt) \
+  ( !((k)&(1<<code_e)) || \
+    (row)->code >= (filt)->begin.code && \
+    (row)->code <= (filt)->end.code )
+
+#define filt_height(k, row, filt) \
+  ( !((k)&(1<<height_e)) || \
+    (row)->height >= (filt)->begin.height && \
+    (row)->height <= (filt)->end.height )
+
+double get_selectivity(int useit, unsigned begin, unsigned end, unsigned maxval)
+{
+    if ( !useit ) return (unsigned)-2;
+    if ( begin > end ) return 0;
+    return (double)(end-begin+1)/maxval;
+}
+
+__Inline size_t search_1(struct T_cash_account_row const *array_ptr, const size_t c_array_size,
+	struct T_cash_account_row *result_ptr, struct T_range_filters const*range_filters) 
+{
+    #define get_selectivity(n) get_selectivity(range_filters->use_filter[n##_e],range_filters->begin.n,range_filters->end.n,maxvals.n); 
+	size_t result_size = 0;
+	size_t i; /* loop index */
+    size_t filt_mask = 0;
+    int prior = 0;
+    struct T_cash_account_row maxvals;
+    double selectivity[last_e];
+    
+    memset(&maxvals,0xff,sizeof(maxvals));
+    selectivity[code_e]   = get_selectivity(code); 
+    selectivity[age_e]    = get_selectivity(age); 
+    selectivity[height_e] = get_selectivity(height); 
+    selectivity[gender_e] = get_selectivity(gender); 
+    selectivity[amount_of_money_e] = get_selectivity(amount_of_money); 
+    
+    for(i = 0; i < last_e; ++i )
+    {
+        int j, n = 0;
+        for ( j = 1; j < last_e; ++j )
+            if ( selectivity[n] > selectivity[j] )
+                n = j;
+        prior = (prior << 4) | (n+1);
+        selectivity[n] = (unsigned)-1;
+    }       
+    
+    for(i = 0; i < last_e; ++i )
+        if( range_filters->use_filter[i] ) 
+            filt_mask |= 1<<i;
+        
+    #define filt_field(n,filter) \
+      case n: \
+          for(i = 0; i < c_array_size; ++i) if ( filter ) \
+              result_ptr[result_size] = array_ptr[i], ++result_size; \
+          break
+
+    switch ( prior ) { $$permut_5(filt_field,0x12345,\
+                                filt_amount_of_money(filt_mask,array_ptr+i,range_filters),\
+                                filt_gender(filt_mask,array_ptr+i,range_filters),\
+                                filt_age(filt_mask,array_ptr+i,range_filters),\
+                                filt_code(filt_mask,array_ptr+i,range_filters),\
+                                filt_height(filt_mask,array_ptr+i,range_filters),\
+                                1); }
+                                
+	return result_size; 
+}
+
 /* Compare row with filters */
-static inline unsigned char test_predicate(struct T_cash_account_row const*const __restrict row, 
+__Inline unsigned char test_predicate(struct T_cash_account_row const*const __restrict row, 
     struct T_range_filters const*const __restrict range_filters) 
 {    
     return 
@@ -138,9 +228,8 @@ static inline unsigned char test_predicate(struct T_cash_account_row const*const
             (row->height >= range_filters->begin.height && row->height <= range_filters->end.height));
 }
 /* ----------------------------------------------------------------------- */
-
 /* search */
-static inline size_t search(struct T_cash_account_row const*const __restrict array_ptr, const size_t c_array_size,
+size_t search(struct T_cash_account_row const*const __restrict array_ptr, const size_t c_array_size,
 	struct T_cash_account_row *const __restrict result_ptr, struct T_range_filters const*const __restrict range_filters) 
 {
 	size_t result_size = 0;
@@ -155,8 +244,17 @@ static inline size_t search(struct T_cash_account_row const*const __restrict arr
 
 int main() {
 
+    int qwerty;
 	size_t i; /* loop index */
+    struct T_range_filters range_filters = {0,};
     struct T_cash_account_row *const array_ptr = ( struct T_cash_account_row *)calloc(c_array_size, sizeof(struct T_cash_account_row));
+    struct T_cash_account_row *const result_ptr = calloc(c_array_size, sizeof(struct T_cash_account_row));
+	size_t result_size;
+	clock_t end, start;
+    float co_took_time, c_took_time, cm_took_time;
+    
+    srand(3);
+    
     if (array_ptr == NULL) {
 		printf ("calloc error\n");
 		exit(1);
@@ -170,7 +268,6 @@ int main() {
 		array_ptr[i] = generate_row();
 	printf ("Generated rows: %d \n", c_array_size);
 
-    struct T_range_filters range_filters = {};
 
 	range_filters.use_filter[amount_of_money_e] = rand()%1 + 0;
 	range_filters.use_filter[gender_e] = rand()%1 + 0;
@@ -184,18 +281,23 @@ int main() {
     range_filters.end.code = range_filters.begin.code + 5;
     range_filters.use_filter[code_e] = rand()%1 + 1;
     
-    struct T_cash_account_row *const result_ptr = ( struct T_cash_account_row *)calloc(c_array_size, sizeof(struct T_cash_account_row));
-
-	size_t result_size;
-	clock_t end, start;
-
-	printf ("C-optimized-Searching...\n");
+	/*printf ("C-optimized-Searching...\n");
 
 	start = clock();
 	result_size = search_optimized(array_ptr, c_array_size, result_ptr, &range_filters);
 	end = clock();
-	float co_took_time = (float)(end - start);
+	co_took_time = (float)(end - start);
 	printf ("C-optimized-search took %f seconds.\n", co_took_time/CLOCKS_PER_SEC);
+
+	printf ("Found rows: %d \n", result_size);
+    */
+	printf ("C-Macro-Searching...\n");
+
+	start = clock();
+	result_size = search_1(array_ptr, c_array_size, result_ptr, &range_filters);
+	end = clock();
+	cm_took_time = (float)(end - start);
+	printf ("C-Macro-Search took %f seconds.\n", cm_took_time/CLOCKS_PER_SEC);
 
 	printf ("Found rows: %d \n", result_size);
 
@@ -204,10 +306,10 @@ int main() {
 	start = clock();
 	result_size = search(array_ptr, c_array_size, result_ptr, &range_filters);
 	end = clock();
-	float c_took_time = (float)(end - start);
+	c_took_time = (float)(end - start);
 	printf ("C-search took %f seconds.\n", c_took_time/CLOCKS_PER_SEC);
 
-	printf ("The C++ faster than C: %f times \n", c_took_time/co_took_time);
+	printf ("The C-macro-search faster than C-search: %f times \n", c_took_time/cm_took_time);
 
 	printf ("Found rows: %d \n", result_size);
     
@@ -216,7 +318,6 @@ int main() {
 			result_ptr[i].age, result_ptr[i].amount_of_money, result_ptr[i].code, result_ptr[i].gender, result_ptr[i].height);
 	}*/
 
-    int qwerty;
-    scanf ("%d",&qwerty);
+    //scanf ("%d",&qwerty);
     return 0;
 }
