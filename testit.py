@@ -30,7 +30,10 @@ COMPILERS = [
                 ( [COMPILER_HOME+r'gcc-4/bin'],
                   [],
                   [] ) ),
-                
+            ( 'ICL12.1', 'icl.exe', CL_OPTS, '-Fe',
+                ( [COMPILER_HOME+r'icl-12.1/bin',COMPILER_HOME+r'10.1/bin'],
+                  [COMPILER_HOME+r'icl-12.1/include',COMPILER_HOME+r'10.1/include',COMPILER_HOME+r'PSDK71/include'],
+                  [COMPILER_HOME+r'icl-12.1/lib',COMPILER_HOME+r'10.1/lib',COMPILER_HOME+r'PSDK71/lib'] ) ),                
            ]
 
 artifacts = []
