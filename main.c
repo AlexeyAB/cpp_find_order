@@ -1,11 +1,19 @@
 #include <stdio.h>      /* printf, scanf, NULL */
 #include <stdlib.h>     /* calloc, exit, free */
 #include <time.h>       /* clock_t, clock, CLOCKS_PER_SEC */
+#include <assert.h>
+#include <string.h>
+
+#if defined _MSC_VER && _MSC_VER < 1600
+#define __restrict
+#endif 
 
 #ifdef _MSC_VER
-#define __Inline __forceinline
+#define __Inline __inline
+#define __Noinline __declspec(noinline)
 #else
 #define __Inline static inline
+#define __Noinline __attribute__((noinline))
 #endif
 
 const size_t c_array_size = 10000000;
@@ -161,7 +169,13 @@ double get_selectivity(int useit, unsigned begin, unsigned end, unsigned maxval)
     return (double)(end-begin+1)/maxval;
 }
 
-__Inline size_t search_1(struct T_cash_account_row const *array_ptr, const size_t c_array_size,
+#ifdef _FORCEINLINE
+__forceinline
+#else
+__Inline 
+#endif
+
+size_t search_1(struct T_cash_account_row const *array_ptr, const size_t c_array_size,
 	struct T_cash_account_row *result_ptr, struct T_range_filters const*range_filters) 
 {
     #define get_selectivity(n) get_selectivity(range_filters->use_filter[n##_e],range_filters->begin.n,range_filters->end.n,maxvals.n); 
@@ -249,11 +263,11 @@ int main() {
     struct T_range_filters range_filters = {0,};
     struct T_cash_account_row *const array_ptr = ( struct T_cash_account_row *)calloc(c_array_size, sizeof(struct T_cash_account_row));
     struct T_cash_account_row *const result_ptr = calloc(c_array_size, sizeof(struct T_cash_account_row));
-	size_t result_size;
+	size_t result_size_1, result_size_2;
 	clock_t end, start;
     float co_took_time, c_took_time, cm_took_time;
     
-    srand(3);
+    //srand(3);
     
     if (array_ptr == NULL) {
 		printf ("calloc error\n");
@@ -266,8 +280,6 @@ int main() {
 	/* Fill table random data */
 	for(i = 0; i < c_array_size; ++i) 
 		array_ptr[i] = generate_row();
-	printf ("Generated rows: %d \n", c_array_size);
-
 
 	range_filters.use_filter[amount_of_money_e] = rand()%1 + 0;
 	range_filters.use_filter[gender_e] = rand()%1 + 0;
@@ -281,43 +293,17 @@ int main() {
     range_filters.end.code = range_filters.begin.code + 5;
     range_filters.use_filter[code_e] = rand()%1 + 1;
     
-	/*printf ("C-optimized-Searching...\n");
-
 	start = clock();
-	result_size = search_optimized(array_ptr, c_array_size, result_ptr, &range_filters);
-	end = clock();
-	co_took_time = (float)(end - start);
-	printf ("C-optimized-search took %f seconds.\n", co_took_time/CLOCKS_PER_SEC);
-
-	printf ("Found rows: %d \n", result_size);
-    */
-	printf ("C-Macro-Searching...\n");
-
-	start = clock();
-	result_size = search_1(array_ptr, c_array_size, result_ptr, &range_filters);
+	result_size_1 = search_1(array_ptr, c_array_size, result_ptr, &range_filters);
 	end = clock();
 	cm_took_time = (float)(end - start);
-	printf ("C-Macro-Search took %f seconds.\n", cm_took_time/CLOCKS_PER_SEC);
-
-	printf ("Found rows: %d \n", result_size);
-
-	printf ("C-Searching...\n");
 
 	start = clock();
-	result_size = search(array_ptr, c_array_size, result_ptr, &range_filters);
+	result_size_2 = search(array_ptr, c_array_size, result_ptr, &range_filters);
 	end = clock();
 	c_took_time = (float)(end - start);
-	printf ("C-search took %f seconds.\n", c_took_time/CLOCKS_PER_SEC);
 
-	printf ("The C-macro-search faster than C-search: %f times \n", c_took_time/cm_took_time);
-
-	printf ("Found rows: %d \n", result_size);
-    
-	/*for(i = 0; i < result_size; ++i) {
-		printf ("%d, %d, %d, %d, %d \n", 
-			result_ptr[i].age, result_ptr[i].amount_of_money, result_ptr[i].code, result_ptr[i].gender, result_ptr[i].height);
-	}*/
-
-    //scanf ("%d",&qwerty);
+    assert(result_size_1 == result_size_2);
+    printf("%d %d %f %f %f\n",c_array_size,result_size_1,cm_took_time/CLOCKS_PER_SEC,c_took_time/CLOCKS_PER_SEC,c_took_time/cm_took_time);
     return 0;
 }
